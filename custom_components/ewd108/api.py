@@ -92,7 +92,14 @@ class Ewd108ModbusClient:
 
     async def async_get_data(self) -> dict[str, Any]:
         """Read and parse one RMC frame from the device."""
-        client = await self._async_ensure_client()
+        try:
+            client = await self._async_ensure_client()
+        except Ewd108ClientError:
+            raise
+        except Exception as err:  # pylint: disable=broad-except
+            raise Ewd108ClientCommunicationError(
+                f"Unable to open Modbus connection: {err}"
+            ) from err
 
         try:
             response = await client.read_holding_registers(
@@ -137,11 +144,11 @@ class Ewd108ModbusClient:
         if self._client is None:
             self._client = self._create_client()
 
-        if not self._client.connected:
+        if not getattr(self._client, "connected", False):
             is_connected = await self._client.connect()
             if not is_connected:
                 raise Ewd108ClientCommunicationError(
-                    "Unable to connect to Modbus serial port"
+                    "Unable to connect to Modbus endpoint"
                 )
 
         return self._client

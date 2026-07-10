@@ -263,7 +263,6 @@ class Ewd108FlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                         ),
                     ],
                     mode=selector.SelectSelectorMode.DROPDOWN,
-                    translation_key="connection_type",
                 )
             )
         }
