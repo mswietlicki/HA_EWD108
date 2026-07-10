@@ -14,7 +14,6 @@ from homeassistant.const import (
     CONF_TIMEOUT,
 )
 from homeassistant.helpers import selector
-from homeassistant.loader import async_get_loaded_integration
 
 from .api import (
     Ewd108ClientCommunicationError,
@@ -58,6 +57,8 @@ from .const import (
     MIN_SLAVE_ID,
 )
 
+DOCUMENTATION_URL = "https://github.com/mswietlicki/HA_EWD108"
+
 
 class Ewd108FlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
     """Config flow for EWD108."""
@@ -77,7 +78,7 @@ class Ewd108FlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         self._modbus_hubs = await self._async_load_modbus_hubs()
 
         if user_input is not None:
-            selected = user_input[CONF_HUB_SOURCE]
+            selected = str(user_input[CONF_HUB_SOURCE])
             if selected == "manual":
                 self._selected_hub_defaults = {}
             else:
@@ -127,15 +128,10 @@ class Ewd108FlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                     data=user_input,
                 )
 
-        integration = async_get_loaded_integration(self.hass, DOMAIN)
-        assert integration.documentation is not None, (  # noqa: S101
-            "Integration documentation URL is not set in manifest.json"
-        )
-
         return self.async_show_form(
             step_id="connection",
             description_placeholders={
-                "documentation_url": integration.documentation,
+                "documentation_url": DOCUMENTATION_URL,
             },
             data_schema=self._build_schema(user_input),
             errors=errors,
@@ -169,19 +165,19 @@ class Ewd108FlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             mapped: dict = {
                 "name": name,
                 CONF_CONNECTION_TYPE: hub_type,
-                CONF_BAUDRATE: int(hub.get(CONF_BAUDRATE, DEFAULT_BAUDRATE)),
-                CONF_BYTESIZE: int(hub.get(CONF_BYTESIZE, DEFAULT_BYTESIZE)),
+                CONF_BAUDRATE: _safe_int(hub.get(CONF_BAUDRATE), DEFAULT_BAUDRATE),
+                CONF_BYTESIZE: _safe_int(hub.get(CONF_BYTESIZE), DEFAULT_BYTESIZE),
                 CONF_PARITY: str(hub.get(CONF_PARITY, DEFAULT_PARITY)).upper(),
-                CONF_STOPBITS: int(hub.get(CONF_STOPBITS, DEFAULT_STOPBITS)),
-                CONF_TIMEOUT: int(hub.get(CONF_TIMEOUT, DEFAULT_TIMEOUT)),
-                CONF_DELAY: float(hub.get(CONF_DELAY, DEFAULT_DELAY)),
+                CONF_STOPBITS: _safe_int(hub.get(CONF_STOPBITS), DEFAULT_STOPBITS),
+                CONF_TIMEOUT: _safe_int(hub.get(CONF_TIMEOUT), DEFAULT_TIMEOUT),
+                CONF_DELAY: _safe_float(hub.get(CONF_DELAY), DEFAULT_DELAY),
             }
 
             if hub_type == CONNECTION_TYPE_SERIAL:
                 mapped[CONF_SERIAL_PORT] = str(hub.get(CONF_PORT, "")).strip()
             else:
                 mapped[CONF_HOST] = str(hub.get(CONF_HOST, "")).strip()
-                mapped[CONF_PORT] = int(hub.get(CONF_PORT, DEFAULT_TCP_PORT))
+                mapped[CONF_PORT] = _safe_int(hub.get(CONF_PORT), DEFAULT_TCP_PORT)
 
             hubs.append(mapped)
 
@@ -246,24 +242,12 @@ class Ewd108FlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             vol.Required(
                 CONF_CONNECTION_TYPE,
                 default=connection_type,
-            ): selector.SelectSelector(
-                selector.SelectSelectorConfig(
-                    options=[
-                        selector.SelectOptionDict(
-                            value=CONNECTION_TYPE_RTU_OVER_TCP,
-                            label="RTU over TCP",
-                        ),
-                        selector.SelectOptionDict(
-                            value=CONNECTION_TYPE_TCP,
-                            label="TCP",
-                        ),
-                        selector.SelectOptionDict(
-                            value=CONNECTION_TYPE_SERIAL,
-                            label="Serial RTU",
-                        ),
-                    ],
-                    mode=selector.SelectSelectorMode.DROPDOWN,
-                )
+            ): vol.In(
+                {
+                    CONNECTION_TYPE_RTU_OVER_TCP: "RTU over TCP",
+                    CONNECTION_TYPE_TCP: "TCP",
+                    CONNECTION_TYPE_SERIAL: "Serial RTU",
+                }
             )
         }
 
@@ -273,136 +257,73 @@ class Ewd108FlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_SERIAL_PORT,
                     default=data.get(CONF_SERIAL_PORT, vol.UNDEFINED),
                 )
-            ] = selector.TextSelector(
-                selector.TextSelectorConfig(
-                    type=selector.TextSelectorType.TEXT,
-                )
-            )
+            ] = str
         else:
             schema[
                 vol.Required(
                     CONF_HOST,
                     default=data.get(CONF_HOST, DEFAULT_HOST),
                 )
-            ] = selector.TextSelector(
-                selector.TextSelectorConfig(
-                    type=selector.TextSelectorType.TEXT,
-                )
-            )
+            ] = str
             schema[
                 vol.Required(
                     CONF_PORT,
                     default=data.get(CONF_PORT, DEFAULT_TCP_PORT),
                 )
-            ] = selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=1,
-                    max=65535,
-                    mode=selector.NumberSelectorMode.BOX,
-                )
-            )
+            ] = vol.All(vol.Coerce(int), vol.Range(min=1, max=65535))
             schema[
                 vol.Required(
                     CONF_DELAY,
                     default=data.get(CONF_DELAY, DEFAULT_DELAY),
                 )
-            ] = selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=0,
-                    max=10,
-                    mode=selector.NumberSelectorMode.BOX,
-                    step=0.1,
-                    unit_of_measurement="s",
-                )
-            )
+            ] = vol.All(vol.Coerce(float), vol.Range(min=0, max=10))
 
         schema.update(
             {
                 vol.Required(
                     CONF_BAUDRATE,
                     default=data.get(CONF_BAUDRATE, DEFAULT_BAUDRATE),
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        min=1200,
-                        max=115200,
-                        mode=selector.NumberSelectorMode.BOX,
-                    )
-                ),
+                ): vol.All(vol.Coerce(int), vol.Range(min=1200, max=115200)),
                 vol.Required(
                     CONF_BYTESIZE,
                     default=data.get(CONF_BYTESIZE, DEFAULT_BYTESIZE),
-                ): selector.SelectSelector(
-                    selector.SelectSelectorConfig(
-                        options=[7, 8],
-                        mode=selector.SelectSelectorMode.DROPDOWN,
-                    )
-                ),
+                ): vol.All(vol.Coerce(int), vol.In([7, 8])),
                 vol.Required(
                     CONF_PARITY,
                     default=data.get(CONF_PARITY, DEFAULT_PARITY),
-                ): selector.SelectSelector(
-                    selector.SelectSelectorConfig(
-                        options=["N", "E", "O"],
-                        mode=selector.SelectSelectorMode.DROPDOWN,
-                    )
-                ),
+                ): vol.In(["N", "E", "O"]),
                 vol.Required(
                     CONF_STOPBITS,
                     default=data.get(CONF_STOPBITS, DEFAULT_STOPBITS),
-                ): selector.SelectSelector(
-                    selector.SelectSelectorConfig(
-                        options=[1, 2],
-                        mode=selector.SelectSelectorMode.DROPDOWN,
-                    )
-                ),
+                ): vol.All(vol.Coerce(int), vol.In([1, 2])),
                 vol.Required(
                     CONF_SLAVE_ID,
                     default=data.get(CONF_SLAVE_ID, DEFAULT_SLAVE_ID),
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        min=MIN_SLAVE_ID,
-                        max=MAX_SLAVE_ID,
-                        mode=selector.NumberSelectorMode.BOX,
-                    )
+                ): vol.All(
+                    vol.Coerce(int), vol.Range(min=MIN_SLAVE_ID, max=MAX_SLAVE_ID)
                 ),
                 vol.Required(
                     CONF_SCAN_INTERVAL,
                     default=data.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        min=MIN_SCAN_INTERVAL,
-                        max=MAX_SCAN_INTERVAL,
-                        mode=selector.NumberSelectorMode.BOX,
-                    )
+                ): vol.All(
+                    vol.Coerce(int),
+                    vol.Range(min=MIN_SCAN_INTERVAL, max=MAX_SCAN_INTERVAL),
                 ),
                 vol.Required(
                     CONF_TIMEOUT,
                     default=data.get(CONF_TIMEOUT, DEFAULT_TIMEOUT),
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        min=1,
-                        max=30,
-                        mode=selector.NumberSelectorMode.BOX,
-                    )
-                ),
+                ): vol.All(vol.Coerce(int), vol.Range(min=1, max=30)),
                 vol.Required(
                     CONF_SET_HA_LOCATION,
                     default=data.get(CONF_SET_HA_LOCATION, DEFAULT_SET_HA_LOCATION),
-                ): selector.BooleanSelector(),
+                ): bool,
                 vol.Required(
                     CONF_LOCATION_THRESHOLD_METERS,
                     default=data.get(
                         CONF_LOCATION_THRESHOLD_METERS,
                         DEFAULT_LOCATION_THRESHOLD_METERS,
                     ),
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        min=1,
-                        max=100000,
-                        mode=selector.NumberSelectorMode.BOX,
-                        unit_of_measurement="m",
-                    )
-                ),
+                ): vol.All(vol.Coerce(float), vol.Range(min=1, max=100000)),
             }
         )
 
@@ -449,3 +370,19 @@ class Ewd108FlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input[CONF_CONNECTION_TYPE] == CONNECTION_TYPE_SERIAL:
             return str(user_input.get(CONF_SERIAL_PORT, "serial")).strip()
         return f"{user_input.get(CONF_HOST)}:{user_input.get(CONF_PORT)}"
+
+
+def _safe_int(value: object, default: int) -> int:
+    """Convert a YAML value to int, falling back to a default."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_float(value: object, default: float) -> float:
+    """Convert a YAML value to float, falling back to a default."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
