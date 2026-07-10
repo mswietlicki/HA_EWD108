@@ -8,13 +8,9 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.config import async_hass_config_yaml
 from homeassistant.const import (
-    CONF_BAUDRATE,
-    CONF_BYTESIZE,
     CONF_HOST,
-    CONF_PARITY,
     CONF_PORT,
     CONF_SCAN_INTERVAL,
-    CONF_STOPBITS,
     CONF_TIMEOUT,
 )
 from homeassistant.helpers import selector
@@ -27,13 +23,17 @@ from .api import (
     Ewd108ModbusClient,
 )
 from .const import (
+    CONF_BAUDRATE,
+    CONF_BYTESIZE,
     CONF_CONNECTION_TYPE,
     CONF_DELAY,
     CONF_HUB_SOURCE,
     CONF_LOCATION_THRESHOLD_METERS,
+    CONF_PARITY,
     CONF_SERIAL_PORT,
     CONF_SET_HA_LOCATION,
     CONF_SLAVE_ID,
+    CONF_STOPBITS,
     DEFAULT_BAUDRATE,
     DEFAULT_BYTESIZE,
     DEFAULT_CONNECTION_TYPE,

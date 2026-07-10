@@ -11,13 +11,9 @@ from datetime import timedelta
 from typing import TYPE_CHECKING
 
 from homeassistant.const import (
-    CONF_BAUDRATE,
-    CONF_BYTESIZE,
     CONF_HOST,
-    CONF_PARITY,
     CONF_PORT,
     CONF_SCAN_INTERVAL,
-    CONF_STOPBITS,
     CONF_TIMEOUT,
     Platform,
 )
@@ -25,10 +21,14 @@ from homeassistant.loader import async_get_loaded_integration
 
 from .api import Ewd108ModbusClient
 from .const import (
+    CONF_BAUDRATE,
+    CONF_BYTESIZE,
     CONF_CONNECTION_TYPE,
     CONF_DELAY,
+    CONF_PARITY,
     CONF_SERIAL_PORT,
     CONF_SLAVE_ID,
+    CONF_STOPBITS,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_TIMEOUT,
     DOMAIN,
