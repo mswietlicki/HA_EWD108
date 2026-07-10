@@ -1,41 +1,37 @@
-"""Binary sensor platform for integration_blueprint."""
+"""Binary sensor platform for EWD108."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from homeassistant.components.binary_sensor import (
-    BinarySensorDeviceClass,
-    BinarySensorEntity,
-    BinarySensorEntityDescription,
-)
+from homeassistant.components.binary_sensor import BinarySensorEntity, BinarySensorEntityDescription
 
-from .entity import IntegrationBlueprintEntity
+from .entity import Ewd108Entity
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-    from .coordinator import BlueprintDataUpdateCoordinator
-    from .data import IntegrationBlueprintConfigEntry
+    from .coordinator import Ewd108DataUpdateCoordinator
+    from .data import Ewd108ConfigEntry
 
 ENTITY_DESCRIPTIONS = (
     BinarySensorEntityDescription(
-        key="integration_blueprint",
-        name="Integration Blueprint Binary Sensor",
-        device_class=BinarySensorDeviceClass.CONNECTIVITY,
+        key="fix_valid",
+        name="Fix valid",
+        icon="mdi:satellite-variant",
     ),
 )
 
 
 async def async_setup_entry(
     hass: HomeAssistant,  # noqa: ARG001 Unused function argument: `hass`
-    entry: IntegrationBlueprintConfigEntry,
+    entry: Ewd108ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the binary_sensor platform."""
     async_add_entities(
-        IntegrationBlueprintBinarySensor(
+        Ewd108BinarySensor(
             coordinator=entry.runtime_data.coordinator,
             entity_description=entity_description,
         )
@@ -43,19 +39,21 @@ async def async_setup_entry(
     )
 
 
-class IntegrationBlueprintBinarySensor(IntegrationBlueprintEntity, BinarySensorEntity):
-    """integration_blueprint binary_sensor class."""
+class Ewd108BinarySensor(Ewd108Entity, BinarySensorEntity):
+    """EWD108 binary sensor class."""
 
     def __init__(
         self,
-        coordinator: BlueprintDataUpdateCoordinator,
+        coordinator: Ewd108DataUpdateCoordinator,
         entity_description: BinarySensorEntityDescription,
     ) -> None:
         """Initialize the binary_sensor class."""
-        super().__init__(coordinator)
+        super().__init__(coordinator, entity_description.key)
         self.entity_description = entity_description
 
     @property
     def is_on(self) -> bool:
         """Return true if the binary_sensor is on."""
-        return self.coordinator.data.get("title", "") == "foo"
+        if self.coordinator.data is None:
+            return False
+        return bool(self.coordinator.data.get("fix_valid", False))

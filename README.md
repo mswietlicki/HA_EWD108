@@ -1,46 +1,150 @@
-# Notice
+# EWD108 GNSS Home Assistant Integration
 
-The component and platforms in this repository are not meant to be used by a
-user, but as a "blueprint" that custom component developers can build
-upon, to make more awesome stuff.
+Custom Home Assistant integration for EBYTE EWD108-GN0x Modbus GNSS devices.
 
-HAVE FUN! 😎
+This integration polls the EWD108 over Modbus (TCP, RTU-over-TCP, or serial RTU), reads the RMC payload, decodes it, and exposes GNSS data as Home Assistant entities.
 
-## Why?
+Supported device family:
 
-This is simple, by having custom_components look (README + structure) the same
-it is easier for developers to help each other and for users to start using them.
+- EWD108-GN03
+- EWD108-GN03B
+- EWD108-GN04
+- EWD108-GN05
+- EWD108-GN06B
 
-If you are a developer and you want to add things to this "blueprint" that you think more
-developers will have use for, please open a PR to add it :)
+Protocol reference used in this repository:
 
-## What?
+- [docs/EWD108-GN0x_Series_UserManual_CN_V1.0.md](docs/EWD108-GN0x_Series_UserManual_CN_V1.0.md)
 
-This repository contains multiple files, here is a overview:
+## Features
 
-File | Purpose | Documentation
--- | -- | --
-`.devcontainer.json` | Used for development/testing with Visual Studio Code. | [Documentation](https://code.visualstudio.com/docs/remote/containers)
-`.github/ISSUE_TEMPLATE/*.yml` | Templates for the issue tracker | [Documentation](https://help.github.com/en/github/building-a-strong-community/configuring-issue-templates-for-your-repository)
-`custom_components/integration_blueprint/*` | Integration files, this is where everything happens. | [Documentation](https://developers.home-assistant.io/docs/creating_component_index)
-`CONTRIBUTING.md` | Guidelines on how to contribute. | [Documentation](https://help.github.com/en/github/building-a-strong-community/setting-guidelines-for-repository-contributors)
-`LICENSE` | The license file for the project. | [Documentation](https://help.github.com/en/github/creating-cloning-and-archiving-repositories/licensing-a-repository)
-`README.md` | The file you are reading now, should contain info about the integration, installation and configuration instructions. | [Documentation](https://help.github.com/en/github/writing-on-github/basic-writing-and-formatting-syntax)
-`requirements.txt` | Python packages used for development/lint/testing this integration. | [Documentation](https://pip.pypa.io/en/stable/user_guide/#requirements-files)
+- Config flow (UI setup) for Modbus TCP, RTU-over-TCP, or serial RTU and slave ID.
+- Polls Modbus holding registers for the RMC NMEA payload.
+- Validates RMC checksum and parses GNSS fields.
+- Exposes useful entities:
+  - Binary sensor: fix validity
+  - Sensors: latitude, longitude, speed, course, timestamp, raw RMC, geohash, human-readable position
+- Optional automatic Home Assistant location update via homeassistant.set_location.
+- Location update is protected by a movement threshold to avoid unnecessary updates.
 
-## How?
+## Installation
 
-1. Create a new repository in GitHub, using this repository as a template by clicking the "Use this template" button in the GitHub UI.
-1. Open your new repository in Visual Studio Code devcontainer (Preferably with the "`Dev Containers: Clone Repository in Named Container Volume...`" option).
-1. Rename all instances of the `integration_blueprint` to `custom_components/<your_integration_domain>` (e.g. `custom_components/awesome_integration`).
-1. Rename all instances of the `Integration Blueprint` to `<Your Integration Name>` (e.g. `Awesome Integration`).
-1. Run the `scripts/develop` to start HA and test out your new integration.
+### Option 1: HACS (recommended)
 
-## Next steps
+1. Open HACS in Home Assistant.
+2. Add this repository as a custom repository (category: Integration).
+3. Install EWD108 GNSS.
+4. Restart Home Assistant.
 
-These are some next steps you may want to look into:
-- Add tests to your integration, [`pytest-homeassistant-custom-component`](https://github.com/MatthewFlamm/pytest-homeassistant-custom-component) can help you get started.
-- Add brand images (logo/icon).
-- Create your first release.
-- Share your integration on the [Home Assistant Forum](https://community.home-assistant.io/).
-- Submit your integration to [HACS](https://hacs.xyz/docs/publish/start).
+### Option 2: Manual
+
+1. Copy [custom_components/ewd108](custom_components/ewd108) into your Home Assistant config folder under custom_components.
+2. Restart Home Assistant.
+
+Expected resulting path:
+
+- &lt;config&gt;/custom_components/ewd108
+
+## Hardware and connectivity
+
+Typical setup:
+
+- EWD108 RS485 variant
+- TCP/RS485 gateway (common) or USB-to-RS485 adapter (optional)
+- 5-24 V power supply for EWD108
+- GNSS antenna connected to SMA ANT
+
+Example TCP gateway configuration:
+
+```yaml
+- name: hub_1
+  type: rtuovertcp
+  host: 192.168.1.10
+  port: 502
+  delay: 1
+  timeout: 1
+```
+
+Default EWD108 serial settings (when using serial transport):
+
+- 9600 baud
+- 8 data bits
+- no parity
+- 1 stop bit
+
+## Home Assistant setup
+
+1. Go to Settings -> Devices and Services.
+1. Click Add Integration.
+1. Search for EWD108 GNSS.
+1. Choose hub source:
+
+- Use existing hub from your configuration.yaml modbus section (if found).
+- Or continue with manual setup.
+
+1. Fill connection and device fields.
+
+- Connection type (RTU over TCP, TCP, or Serial RTU)
+- Host/TCP port (for network transports)
+- Serial port (for serial transport)
+- Delay (for network transports)
+- Baud rate
+- Data bits
+- Parity
+- Stop bits
+- Modbus slave ID
+- Polling interval (seconds)
+- Modbus timeout (seconds)
+- Set Home Assistant location (optional)
+- Location update threshold (meters)
+
+## Entities
+
+### Binary sensor
+
+- Fix valid: ON when RMC status is valid (A), OFF when invalid (V).
+
+### Sensors
+
+- Latitude
+- Longitude
+- Speed (km/h)
+- Course
+- Timestamp (UTC)
+- Raw RMC sentence
+- Geohash
+- Position text (formatted coordinates)
+
+## Notes
+
+- The integration currently uses the RMC payload as the primary data source.
+- Timestamp is UTC from the device data.
+- Home Assistant location update runs only when:
+  - fix is valid
+  - coordinates exist
+  - movement since last applied location exceeds threshold
+
+## Troubleshooting
+
+- Check serial wiring (A/B lines, ground reference, power).
+- Verify serial settings match the device configuration.
+- Confirm slave ID is correct.
+- Verify that your RS485 adapter is exposed to Home Assistant.
+- Enable debug logs for this integration in [config/configuration.yaml](config/configuration.yaml):
+
+```yaml
+logger:
+  default: info
+  logs:
+    custom_components.ewd108: debug
+```
+
+## Development
+
+- Main integration code: [custom_components/ewd108](custom_components/ewd108)
+- Device documentation: [docs/EWD108-GN0x_Series_UserManual_CN_V1.0.md](docs/EWD108-GN0x_Series_UserManual_CN_V1.0.md)
+- Development helper scripts: [scripts](scripts)
+
+## License
+
+See [LICENSE](LICENSE).

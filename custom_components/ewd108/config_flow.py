@@ -1,0 +1,452 @@
+"""Adds config flow for EWD108 GNSS integration."""
+
+from __future__ import annotations
+
+from copy import deepcopy
+
+import voluptuous as vol
+from homeassistant import config_entries
+from homeassistant.config import async_hass_config_yaml
+from homeassistant.const import (
+    CONF_BAUDRATE,
+    CONF_BYTESIZE,
+    CONF_HOST,
+    CONF_PARITY,
+    CONF_PORT,
+    CONF_SCAN_INTERVAL,
+    CONF_STOPBITS,
+    CONF_TIMEOUT,
+)
+from homeassistant.helpers import selector
+from homeassistant.loader import async_get_loaded_integration
+
+from .api import (
+    Ewd108ClientCommunicationError,
+    Ewd108ClientError,
+    Ewd108ClientParseError,
+    Ewd108ModbusClient,
+)
+from .const import (
+    CONF_CONNECTION_TYPE,
+    CONF_DELAY,
+    CONF_HUB_SOURCE,
+    CONF_LOCATION_THRESHOLD_METERS,
+    CONF_SERIAL_PORT,
+    CONF_SET_HA_LOCATION,
+    CONF_SLAVE_ID,
+    DEFAULT_BAUDRATE,
+    DEFAULT_BYTESIZE,
+    DEFAULT_CONNECTION_TYPE,
+    DEFAULT_DELAY,
+    DEFAULT_HOST,
+    DEFAULT_LOCATION_THRESHOLD_METERS,
+    DEFAULT_PARITY,
+    DEFAULT_SCAN_INTERVAL,
+    DEFAULT_SET_HA_LOCATION,
+    DEFAULT_SLAVE_ID,
+    DEFAULT_STOPBITS,
+    DEFAULT_TCP_PORT,
+    DEFAULT_TIMEOUT,
+    CONNECTION_TYPE_RTU_OVER_TCP,
+    CONNECTION_TYPE_SERIAL,
+    CONNECTION_TYPE_TCP,
+    DOMAIN,
+    LOGGER,
+    MAX_SCAN_INTERVAL,
+    MAX_SLAVE_ID,
+    MIN_SCAN_INTERVAL,
+    MIN_SLAVE_ID,
+)
+
+
+class Ewd108FlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
+    """Config flow for EWD108."""
+
+    VERSION = 1
+
+    def __init__(self) -> None:
+        """Initialize flow state."""
+        self._modbus_hubs: list[dict] = []
+        self._selected_hub_defaults: dict = {}
+
+    async def async_step_user(
+        self,
+        user_input: dict | None = None,
+    ) -> config_entries.ConfigFlowResult:
+        """Handle initial step selecting existing hub or manual setup."""
+        self._modbus_hubs = await self._async_load_modbus_hubs()
+
+        if user_input is not None:
+            selected = user_input[CONF_HUB_SOURCE]
+            if selected == "manual":
+                self._selected_hub_defaults = {}
+            else:
+                hub_name = selected.removeprefix("hub:")
+                self._selected_hub_defaults = next(
+                    (hub for hub in self._modbus_hubs if hub["name"] == hub_name),
+                    {},
+                )
+            return await self.async_step_connection()
+
+        return self.async_show_form(
+            step_id="user",
+            data_schema=self._build_hub_source_schema(),
+        )
+
+    async def async_step_connection(
+        self,
+        user_input: dict | None = None,
+    ) -> config_entries.ConfigFlowResult:
+        """Handle transport and device-specific configuration."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            try:
+                self._validate_values(user_input)
+                await self._test_connection(user_input)
+            except ValueError:
+                errors["base"] = "invalid_config"
+            except Ewd108ClientCommunicationError as exception:
+                LOGGER.error(exception)
+                errors["base"] = "connection"
+            except Ewd108ClientParseError as exception:
+                LOGGER.error(exception)
+                errors["base"] = "invalid_rmc"
+            except Ewd108ClientError as exception:
+                LOGGER.exception("Unexpected EWD108 client error: %s", exception)
+                errors["base"] = "unknown"
+            else:
+                endpoint = self._endpoint_id(user_input)
+                unique_id = f"{user_input[CONF_CONNECTION_TYPE]}_{endpoint}_{user_input[CONF_SLAVE_ID]}"
+                await self.async_set_unique_id(
+                    unique_id=unique_id,
+                )
+                self._abort_if_unique_id_configured()
+                return self.async_create_entry(
+                    title=f"EWD108 {endpoint} slave {user_input[CONF_SLAVE_ID]}",
+                    data=user_input,
+                )
+
+        integration = async_get_loaded_integration(self.hass, DOMAIN)
+        assert integration.documentation is not None, (  # noqa: S101
+            "Integration documentation URL is not set in manifest.json"
+        )
+
+        return self.async_show_form(
+            step_id="connection",
+            description_placeholders={
+                "documentation_url": integration.documentation,
+            },
+            data_schema=self._build_schema(user_input),
+            errors=errors,
+        )
+
+    async def _async_load_modbus_hubs(self) -> list[dict]:
+        """Read modbus hubs from configuration.yaml and map supported fields."""
+        try:
+            config = await async_hass_config_yaml(self.hass)
+        except Exception as err:  # pylint: disable=broad-except
+            LOGGER.debug("Unable to load YAML config for modbus hubs: %s", err)
+            return []
+
+        hubs: list[dict] = []
+        for hub in config.get("modbus", []):
+            if not isinstance(hub, dict):
+                continue
+
+            hub_type = str(hub.get("type", "")).lower()
+            if hub_type not in {
+                CONNECTION_TYPE_SERIAL,
+                CONNECTION_TYPE_TCP,
+                CONNECTION_TYPE_RTU_OVER_TCP,
+            }:
+                continue
+
+            name = str(hub.get("name", "")).strip()
+            if not name:
+                continue
+
+            mapped: dict = {
+                "name": name,
+                CONF_CONNECTION_TYPE: hub_type,
+                CONF_BAUDRATE: int(hub.get(CONF_BAUDRATE, DEFAULT_BAUDRATE)),
+                CONF_BYTESIZE: int(hub.get(CONF_BYTESIZE, DEFAULT_BYTESIZE)),
+                CONF_PARITY: str(hub.get(CONF_PARITY, DEFAULT_PARITY)).upper(),
+                CONF_STOPBITS: int(hub.get(CONF_STOPBITS, DEFAULT_STOPBITS)),
+                CONF_TIMEOUT: int(hub.get(CONF_TIMEOUT, DEFAULT_TIMEOUT)),
+                CONF_DELAY: float(hub.get(CONF_DELAY, DEFAULT_DELAY)),
+            }
+
+            if hub_type == CONNECTION_TYPE_SERIAL:
+                mapped[CONF_SERIAL_PORT] = str(hub.get(CONF_PORT, "")).strip()
+            else:
+                mapped[CONF_HOST] = str(hub.get(CONF_HOST, "")).strip()
+                mapped[CONF_PORT] = int(hub.get(CONF_PORT, DEFAULT_TCP_PORT))
+
+            hubs.append(mapped)
+
+        return hubs
+
+    def _build_hub_source_schema(self) -> vol.Schema:
+        """Build selector for choosing existing modbus hub or manual setup."""
+        options = [
+            selector.SelectOptionDict(value="manual", label="Manual setup")
+        ]
+        for hub in self._modbus_hubs:
+            options.append(
+                selector.SelectOptionDict(
+                    value=f"hub:{hub['name']}",
+                    label=f"Use existing hub: {hub['name']}",
+                )
+            )
+
+        default = "manual"
+        if self._modbus_hubs:
+            default = f"hub:{self._modbus_hubs[0]['name']}"
+
+        return vol.Schema(
+            {
+                vol.Required(CONF_HUB_SOURCE, default=default): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=options,
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                )
+            }
+        )
+
+    async def _test_connection(self, user_input: dict) -> None:
+        """Validate Modbus connectivity and payload format."""
+        client = Ewd108ModbusClient(
+            connection_type=user_input[CONF_CONNECTION_TYPE],
+            host=user_input.get(CONF_HOST),
+            port=user_input.get(CONF_PORT, 0),
+            serial_port=user_input.get(CONF_SERIAL_PORT),
+            baudrate=user_input[CONF_BAUDRATE],
+            bytesize=user_input[CONF_BYTESIZE],
+            parity=user_input[CONF_PARITY],
+            stopbits=user_input[CONF_STOPBITS],
+            slave_id=user_input[CONF_SLAVE_ID],
+            delay=float(user_input.get(CONF_DELAY, DEFAULT_DELAY)),
+            timeout=user_input[CONF_TIMEOUT],
+        )
+        try:
+            await client.async_get_data()
+        finally:
+            await client.async_close()
+
+    def _build_schema(self, user_input: dict | None) -> vol.Schema:
+        """Build form schema with defaults and selectors."""
+        data = deepcopy(self._selected_hub_defaults)
+        if user_input:
+            data.update(user_input)
+        connection_type = data.get(CONF_CONNECTION_TYPE, DEFAULT_CONNECTION_TYPE)
+
+        schema: dict = {
+            vol.Required(
+                CONF_CONNECTION_TYPE,
+                default=connection_type,
+            ): selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=[
+                        selector.SelectOptionDict(
+                            value=CONNECTION_TYPE_RTU_OVER_TCP,
+                            label="RTU over TCP",
+                        ),
+                        selector.SelectOptionDict(
+                            value=CONNECTION_TYPE_TCP,
+                            label="TCP",
+                        ),
+                        selector.SelectOptionDict(
+                            value=CONNECTION_TYPE_SERIAL,
+                            label="Serial RTU",
+                        ),
+                    ],
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                    translation_key="connection_type",
+                )
+            )
+        }
+
+        if connection_type == CONNECTION_TYPE_SERIAL:
+            schema[
+                vol.Required(
+                    CONF_SERIAL_PORT,
+                    default=data.get(CONF_SERIAL_PORT, vol.UNDEFINED),
+                )
+            ] = selector.TextSelector(
+                selector.TextSelectorConfig(
+                    type=selector.TextSelectorType.TEXT,
+                )
+            )
+        else:
+            schema[
+                vol.Required(
+                    CONF_HOST,
+                    default=data.get(CONF_HOST, DEFAULT_HOST),
+                )
+            ] = selector.TextSelector(
+                selector.TextSelectorConfig(
+                    type=selector.TextSelectorType.TEXT,
+                )
+            )
+            schema[
+                vol.Required(
+                    CONF_PORT,
+                    default=data.get(CONF_PORT, DEFAULT_TCP_PORT),
+                )
+            ] = selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=1,
+                    max=65535,
+                    mode=selector.NumberSelectorMode.BOX,
+                )
+            )
+            schema[
+                vol.Required(
+                    CONF_DELAY,
+                    default=data.get(CONF_DELAY, DEFAULT_DELAY),
+                )
+            ] = selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=0,
+                    max=10,
+                    mode=selector.NumberSelectorMode.BOX,
+                    step=0.1,
+                    unit_of_measurement="s",
+                )
+            )
+
+        schema.update(
+            {
+                vol.Required(
+                    CONF_BAUDRATE,
+                    default=data.get(CONF_BAUDRATE, DEFAULT_BAUDRATE),
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=1200,
+                        max=115200,
+                        mode=selector.NumberSelectorMode.BOX,
+                    )
+                ),
+                vol.Required(
+                    CONF_BYTESIZE,
+                    default=data.get(CONF_BYTESIZE, DEFAULT_BYTESIZE),
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=[7, 8],
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+                vol.Required(
+                    CONF_PARITY,
+                    default=data.get(CONF_PARITY, DEFAULT_PARITY),
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=["N", "E", "O"],
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+                vol.Required(
+                    CONF_STOPBITS,
+                    default=data.get(CONF_STOPBITS, DEFAULT_STOPBITS),
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=[1, 2],
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+                vol.Required(
+                    CONF_SLAVE_ID,
+                    default=data.get(CONF_SLAVE_ID, DEFAULT_SLAVE_ID),
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=MIN_SLAVE_ID,
+                        max=MAX_SLAVE_ID,
+                        mode=selector.NumberSelectorMode.BOX,
+                    )
+                ),
+                vol.Required(
+                    CONF_SCAN_INTERVAL,
+                    default=data.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=MIN_SCAN_INTERVAL,
+                        max=MAX_SCAN_INTERVAL,
+                        mode=selector.NumberSelectorMode.BOX,
+                    )
+                ),
+                vol.Required(
+                    CONF_TIMEOUT,
+                    default=data.get(CONF_TIMEOUT, DEFAULT_TIMEOUT),
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=1,
+                        max=30,
+                        mode=selector.NumberSelectorMode.BOX,
+                    )
+                ),
+                vol.Required(
+                    CONF_SET_HA_LOCATION,
+                    default=data.get(CONF_SET_HA_LOCATION, DEFAULT_SET_HA_LOCATION),
+                ): selector.BooleanSelector(),
+                vol.Required(
+                    CONF_LOCATION_THRESHOLD_METERS,
+                    default=data.get(
+                        CONF_LOCATION_THRESHOLD_METERS,
+                        DEFAULT_LOCATION_THRESHOLD_METERS,
+                    ),
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=1,
+                        max=100000,
+                        mode=selector.NumberSelectorMode.BOX,
+                        unit_of_measurement="m",
+                    )
+                ),
+            }
+        )
+
+        return vol.Schema(schema)
+
+    def _validate_values(self, user_input: dict) -> None:
+        """Validate form values before connection test."""
+        connection_type = user_input[CONF_CONNECTION_TYPE]
+        if connection_type not in {
+            CONNECTION_TYPE_SERIAL,
+            CONNECTION_TYPE_TCP,
+            CONNECTION_TYPE_RTU_OVER_TCP,
+        }:
+            raise ValueError("Invalid connection type")
+
+        if connection_type == CONNECTION_TYPE_SERIAL:
+            if not str(user_input.get(CONF_SERIAL_PORT, "")).strip():
+                raise ValueError("Serial port is required")
+        else:
+            if not str(user_input.get(CONF_HOST, "")).strip():
+                raise ValueError("Host is required")
+            tcp_port = int(user_input[CONF_PORT])
+            if tcp_port < 1 or tcp_port > 65535:
+                raise ValueError("Invalid TCP port")
+
+            delay = float(user_input.get(CONF_DELAY, DEFAULT_DELAY))
+            if delay < 0:
+                raise ValueError("Invalid delay")
+
+        slave_id = int(user_input[CONF_SLAVE_ID])
+        if slave_id < MIN_SLAVE_ID or slave_id > MAX_SLAVE_ID:
+            raise ValueError("Invalid slave id")
+
+        scan_interval = int(user_input[CONF_SCAN_INTERVAL])
+        if scan_interval < MIN_SCAN_INTERVAL or scan_interval > MAX_SCAN_INTERVAL:
+            raise ValueError("Invalid scan interval")
+
+        threshold = float(user_input[CONF_LOCATION_THRESHOLD_METERS])
+        if threshold <= 0:
+            raise ValueError("Invalid location threshold")
+
+    def _endpoint_id(self, user_input: dict) -> str:
+        """Create a stable endpoint identifier for title/unique id."""
+        if user_input[CONF_CONNECTION_TYPE] == CONNECTION_TYPE_SERIAL:
+            return str(user_input.get(CONF_SERIAL_PORT, "serial")).strip()
+        return f"{user_input.get(CONF_HOST)}:{user_input.get(CONF_PORT)}"
