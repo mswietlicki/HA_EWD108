@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -20,7 +20,7 @@ def test_parse_rmc_sentence_manual_sample() -> None:
     parsed = _parse_rmc_sentence(sentence)
 
     assert parsed.fix_valid is True
-    assert parsed.timestamp_utc == datetime(2022, 4, 19, 8, 34, 29, tzinfo=timezone.utc)
+    assert parsed.timestamp_utc == datetime(2022, 4, 19, 8, 34, 29, tzinfo=UTC)
     assert parsed.latitude == pytest.approx(30.7711281666)
     assert parsed.longitude == pytest.approx(103.934158)
     assert parsed.speed_knots == pytest.approx(0.0)
@@ -33,7 +33,9 @@ def test_parse_rmc_sentence_manual_sample() -> None:
 
 def test_parse_rmc_sentence_invalid_checksum() -> None:
     """Reject sentence when checksum does not match."""
-    bad_sentence = "$GNRMC,083429.00,A,3046.26769,N,10356.04948,E,000.00,089.80,190422*22"
+    bad_sentence = (
+        "$GNRMC,083429.00,A,3046.26769,N,10356.04948,E,000.00,089.80,190422*22"
+    )
 
     with pytest.raises(Ewd108ClientParseError, match="Checksum mismatch"):
         _parse_rmc_sentence(bad_sentence)
