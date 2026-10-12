@@ -23,3 +23,9 @@ keep-runtime-typing = true
 
 [lint.mccabe]
 max-complexity = 25
+
+# Fixed NMEA field widths/positions and geographic limits are protocol constants.
+[lint.per-file-ignores]
+"custom_components/ewd108/api.py" = ["PLR2004", "PLR0911"]
+"custom_components/ewd108/validation.py" = ["PLR2004", "PLR0911"]
+"tests/*.py" = ["PLR2004", "S101", "SLF001"]

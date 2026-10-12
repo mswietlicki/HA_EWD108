@@ -18,14 +18,27 @@ Protocol reference used in this repository:
 
 ## Features
 
-- Config flow (UI setup) for Modbus TCP, RTU-over-TCP, or serial RTU and slave ID.
-- Polls Modbus holding registers for the RMC NMEA payload.
-- Validates RMC checksum and parses GNSS fields.
-- Exposes useful entities:
-  - Binary sensor: fix validity
-  - Sensors: latitude, longitude, speed, course, timestamp, raw RMC, geohash, human-readable position
-- Optional automatic Home Assistant location update via homeassistant.set_location.
-- Location update is protected by a movement threshold to avoid unnecessary updates.
+Requires **Home Assistant 2026.10 or newer**.
+
+- Uses Home Assistant's shared Modbus unit API for TCP, serial RTU and RTU over TCP.
+- Reads one complete 35-register RMC frame per poll instead of independent coordinate registers.
+- Defaults to **30-second polling** with two retries on read/parse failure (1-second then 2-second waits).
+- Validates checksum, coordinate format/bounds, date/time freshness and plausible movement.
+- Publishes latitude and longitude together through a native GPS device tracker.
+- Reports invalid fixes as unavailable GPS, preserving the raw frame and a diagnostic rejection reason.
+- Automatically reconnects through HA's connection manager; unloading releases only this integration's unit.
+- Provides a settings flow for changing polling and connection settings without recreating entities.
+- Optionally updates HA's location only from accepted GPS fixes.
+
+A frame older than 30 seconds or more than 5 seconds in the future is rejected.
+Jump filtering permits up to 250 km/h plus a 100 m tolerance, using GNSS time
+and the last accepted fix. Invalid readings do not replace that baseline.
+Coherent readings on the equator or prime meridian remain valid; only the
+zero/zero sentinel is always rejected. Invalid-fix responses do not trigger
+communication retries: they are successful reads of a receiver without a fix.
+
+See [migration from YAML polling](docs/shared-modbus-migration.md) before
+activating this version on an existing Modbus gateway.
 
 ## Installation
 
@@ -117,7 +130,7 @@ Default EWD108 serial settings (when using serial transport):
 
 ## Notes
 
-- The integration currently uses the RMC payload as the primary data source.
+- All position entities consume one validated RMC sample.
 - Timestamp is UTC from the device data.
 - Home Assistant location update runs only when:
   - fix is valid
