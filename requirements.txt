@@ -6,5 +6,5 @@ pytest==9.1.1
 pytest-asyncio==1.4.0
 
 # Match the Modbus dependency shipped with the tested HA version.
-modbus-connection[tmodbus]==4.12.4
+modbus-connection[tmodbus]==4.12.7
 pymodbus==3.13.1
